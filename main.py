@@ -5,14 +5,10 @@ Mimari kural: App.build() ASLA PLC bağlantısını beklemez. ModbusService
 arka plan thread'inde kendi kendine bağlanmayı dener/yeniden dener;
 ana thread (Kivy) sadece anında dönen public metotları kullanır.
 
-Host/port şu an ortam değişkenlerinden okunuyor. Bu geçici bir çözüm —
-sıradaki adımlarda (bkz. handoff.md) `config/settings.py` + `.env`
-üzerinden merkezi bir yapılandırmaya taşınacak.
+Bağlantı/register sabitleri `config/settings.py`'den okunuyor.
 """
 
 from __future__ import annotations
-
-import os
 
 from kivy.config import Config
 
@@ -27,19 +23,25 @@ from kivy.app import App
 from kivy.clock import Clock
 from kivy.uix.screenmanager import ScreenManager
 
+from config import settings
 from screens.home_screen import HomeScreen
 from services.modbus_service import ModbusService
+from services.profile_store import ProfileStore
 
 
 class RoasterApp(App):
     title = "RoasterInterface v2"
 
     def build(self):
-        host = os.environ.get("MODBUS_HOST", "192.168.1.50")
-        port = int(os.environ.get("MODBUS_PORT", "502"))
-
-        self.modbus_service = ModbusService(host=host, port=port, unit_id=1, timeout=1.5)
+        self.modbus_service = ModbusService(
+            host=settings.MODBUS_HOST,
+            port=settings.MODBUS_PORT,
+            unit_id=settings.MODBUS_UNIT_ID,
+            timeout=settings.MODBUS_TIMEOUT,
+        )
         self.modbus_service.start()
+
+        self.profile_store = ProfileStore(profiles_dir=settings.PROFILES_DIR)
 
         Clock.schedule_interval(lambda dt: self.modbus_service.process_events(), 0.1)
 

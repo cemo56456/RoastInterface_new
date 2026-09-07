@@ -18,10 +18,11 @@ from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 
 from services.modbus_service import ModbusService
+from services.profile_store import ProfileStore
 
 
 class BaseRoasterScreen(Screen):
-    """Ortak yardımcıları ve `ModbusService` erişimini sağlayan temel ekran."""
+    """Ortak yardımcıları ve servis erişimini sağlayan temel ekran."""
 
     @property
     def modbus(self) -> ModbusService:
@@ -31,6 +32,10 @@ class BaseRoasterScreen(Screen):
         seviyesinde yaşar, ekranlar sadece kullanır.
         """
         return App.get_running_app().modbus_service
+
+    @property
+    def profiles(self) -> ProfileStore:
+        return App.get_running_app().profile_store
 
     def _dark_popup(self, title: str, message: str, auto_dismiss: bool = True) -> Popup:
         """Koyu temalı, tek butonlu bir bilgi/uyarı popup'ı açar."""

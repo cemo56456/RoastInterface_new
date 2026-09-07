@@ -134,19 +134,54 @@ doğrulanıyor (`services/profile_store.py` içindeki `_VALID_NAME`).
 `tests/test_profile_store.py` — 18 test, gerçek dosya sistemine
 (`tmp_path`) karşı, hepsi geçiyor.
 
-## UI mimarisi — netleştirilen karar (henüz uygulanmadı)
+### `config/settings.py`
+**2026-09-07 oturumunda yazıldı.** Madde 7'nin bir kısmı erkenden yapıldı
+çünkü `HomeScreen`'in canlı sıcaklıkları göstermesi için gerekliydi. PLC
+host/port/unit_id/timeout ve sıcaklık register'ları (`REG_SET_TEMP=2020`,
+`REG_BEAN_TEMP=2021`, `REG_EXHAUST_TEMP=2022`) burada toplu. **Bu
+register adresleri YER TUTUCU** — `tools/modbus_simulator.py` ile aynı
+ama gerçek PLC'nin register haritası muhtemelen farklı (bkz. aşağıdaki
+"Dikkat edilmesi gerekenler": MW580-609 aralığı). Kullanıcı şu an gerçek
+adresleri hatırlamıyor/elinde değil; `RoasterInterface_Fonksiyon_Referansi.md`
+bulununca sadece bu dosyadaki sabitler güncellenecek, başka hiçbir yer
+değişmeyecek. `.env` entegrasyonu henüz yok, sadece `os.environ.get` ile
+ortam değişkeni okunuyor.
 
-Kullanıcı, orijinal uygulamanın ana ekranının şöyle çalıştığını hatırlıyor:
+### `widgets/temp_graph.py`
+Bağımlılıksız (kivy_garden gerektirmeyen), son N örneği canvas Line ile
+çizen basit kayan grafik. Eksen etiketi/skala çizgisi yok — henüz
+istenmedi.
+
+## UI mimarisi — uygulandı (2026-09-07)
+
+Kullanıcı, orijinal uygulamanın ana ekranının şöyle çalıştığını hatırladı:
 sıcaklıklar/zaman/işlem durumu/grafik alanı **sabit** kalıyor, üstte
 sekmeler (tab) ile Profil seçimi ve Manuel Kontrol gibi paneller bu sabit
-alanın etrafında/altında değişiyordu — ayrı ayrı gezinilen tam ekranlar
-değil. v2'de `HomeScreen` şu an sadece bir LED + "yakında" butonlarından
-oluşan basit bir iskelet (bkz. yukarı); bu, **ProfileStore ve Live
-Roast/Manual Control mantığı netleşince aynı adımda** bu sabit-alan +
-sekme yapısına göre yeniden kurgulanacak (kullanıcı sırayı böyle istedi:
-önce veri katmanı, sonra arayüz). Ayrı `ProfileScreen`/`LiveRoastScreen`
-gibi tam ekranlar açan navigasyon fikri (ilk taslakta vardı) bu yüzden
-**terk edildi**.
+alanın altında değişiyordu — ayrı ayrı gezinilen tam ekranlar değil. Ayrı
+`ProfileScreen`/`LiveRoastScreen` gibi tam ekranlar açan navigasyon fikri
+(ilk taslakta vardı) bu yüzden **terk edildi**.
+
+`HomeScreen` bu yapıya göre yeniden kuruldu:
+- Sabit üst alan: bağlantı LED'i, Set/Bean/Egzoz sıcaklık etiketleri
+  (`ModbusService.subscribe("home_live_temps", ...)` ile abone olunuyor,
+  `on_enter`'da abone olunuyor/`on_leave`'de `unsubscribe` ediliyor),
+  `TempGraph` widget'ı (bean temp'i çiziyor).
+- Alt kısım: `TabbedPanel` — "Profil" sekmesi `ProfileStore.list_profiles()`'ı
+  listeliyor, bir profile dokununca şimdilik sadece içeriğini toast olarak
+  gösteriyor (PLC'ye gerçekten uygulama mantığı henüz yok — bu, muhtemelen
+  bir "kavurmayı başlat" akışıyla birlikte gelecek). "Manuel Kontrol"
+  sekmesi şimdilik yer tutucu metin — hangi register/coil'lerin
+  yazılacağı bilinmiyor.
+- **Bilinçli olarak eklenmedi:** kronometre (süre) ve süreç aşaması
+  (kurutma/sararma/ilk çatlak vb.) göstergeleri — kullanıcı bunların hangi
+  coil/register'a bağlı olduğunu hatırlamıyor, sahte/işlevsiz bir şey
+  koymak yerine register haritası netleşene kadar bekletildi.
+
+**Davranışsal olarak doğrulandı** (gerçek pencere, simülatöre karşı):
+`plc_connected=True`, sıcaklıklar doğru ölçeklenip (`/10`) gösteriliyor,
+6 saniyede grafik 20 nokta biriktirdi, profil listesi `ProfileStore`'dan
+doğru okunuyor. Piksel bazlı görsel kontrol yine kullanıcı tarafından
+`python main.py` ile yapılmalı (bkz. yukarıdaki ekran görüntüsü notu).
 
 ## Sırada ne var (henüz yazılmadı)
 
@@ -161,14 +196,16 @@ Kullanıcıyla üzerinde anlaşılan sıra:
    tarafından `python main.py` ile elle teyit edilmeli)
 5. ~~`ProfileStore` (JSON okuma/yazma/listeleme)~~ ✅ (2026-09-06, bkz.
    yukarıdaki not — şema kasıtlı olarak serbest bırakıldı)
-6. **← BURADAYIZ.** `HomeScreen`'i sabit sıcaklık/zaman/grafik alanı +
-   üstte sekmeli (Profil/Manuel Kontrol) panel yapısına göre yeniden
-   kurgulamak (bkz. "UI mimarisi" notu). Live Roast verisi için henüz bir
-   servis yok — muhtemelen bu adımda `ModbusService` üzerinden canlı
-   register aboneliği + grafik widget'ı gerekecek.
-7. `config/settings.py` ile tüm register sabitlerini ve `.env` ile
-   kimlik/host bilgilerini merkezileştirme (şu an `main.py` içinde sadece
-   `MODBUS_HOST`/`MODBUS_PORT` ortam değişkenleri okunuyor — geçici).
+6. ~~`HomeScreen`'i sabit sıcaklık/grafik alanı + sekmeli (Profil/Manuel
+   Kontrol) panel yapısına göre yeniden kurgulamak~~ ✅ (2026-09-07, bkz.
+   "UI mimarisi — uygulandı" notu)
+7. **← BURADAYIZ.** `config/settings.py` şimdilik sadece bağlantı +
+   sıcaklık register'larını içeriyor (yer tutucu adreslerle, bkz. yukarı).
+   Gerçek register haritası (`RoasterInterface_Fonksiyon_Referansi.md`)
+   elde edilince: (a) bu dosyadaki sabitler güncellenecek, (b) "Manuel
+   Kontrol" sekmesine gerçek yazma butonları eklenecek, (c) kronometre ve
+   süreç aşaması göstergeleri eklenecek (hangi coil'e bağlı olduğu
+   netleşince). `.env` dosyası entegrasyonu da henüz yapılmadı.
 8. Launcher'ın gerçek entegrasyonu ve testi.
 
 ## Dikkat edilmesi gerekenler
