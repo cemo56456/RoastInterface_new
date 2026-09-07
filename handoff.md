@@ -183,6 +183,117 @@ alanın altında değişiyordu — ayrı ayrı gezinilen tam ekranlar değil. Ay
 doğru okunuyor. Piksel bazlı görsel kontrol yine kullanıcı tarafından
 `python main.py` ile yapılmalı (bkz. yukarıdaki ekran görüntüsü notu).
 
+## Orijinal ana ekranın gerçek yapısı (2026-09-07, kullanıcı ekran görüntüsü paylaştı)
+
+Kullanıcı orijinal uygulamadan bir ekran görüntüsü paylaştı. Bu, tahmin
+ettiğimizden daha zengin bir yapı — v2'nin `HomeScreen`'i şu an bunun çok
+sadeleştirilmiş bir hâli, aşağıdaki eksikler bilerek not ediliyor.
+
+**Üst sekmeler (4 tane, 2 değil):** Home, Manuel Control, Make Profile,
+Profile. v2'de şu an sadece Profil + Manuel Kontrol var — **Make Profile**
+(profil oluşturma/düzenleme) ayrı bir sekme olarak eksik, "Profile"
+sekmesi muhtemelen sadece var olanları seçmek/uygulamak için.
+
+**Sol panel (sabit, tüm sekmelerde aynı kalıyor gibi görünüyor):**
+- Set Value, Bean Temp, Exhaust TEMP (v2'de zaten var)
+- **3 yarım-daire gösterge (yeni, v2'de yok):** Exhaust (%), Burner (%),
+  Airflow (Pa) — bunlar hangi register'dan geliyor bilinmiyor, register
+  haritası ile birlikte gelecek.
+
+**Sağ panel (sabit, v2'de tamamen eksik):**
+- Roasting Time (toplam süre, 00:00 formatı)
+- Drying Time / Maillard Time / Development Time — her biri süre +
+  yüzde (muhtemelen toplam sürenin yüzdesi olarak faz payı)
+- Rate Of Rise (RoR): anlık °C ve "°C max" — bean temp'in türevi
+  (dakikadaki artış), muhtemelen **hesaplanabilir** (register'a ihtiyaç
+  yok, bean temp geçmişinden hesaplanır) — bu register haritası
+  beklemeden şimdi bile eklenebilir.
+- Sağ altta bir saat/durum göstergesi (yeşil, "21:11:07") — muhtemelen
+  sistem saati, PLC'den gelmiyor olabilir.
+- **"Profile Start" butonu** — kavurmayı başlatan gerçek tetik. Hangi
+  coil'e yazdığı register haritasıyla netleşecek.
+
+**Orta alan ("Make Profile" sekmesi aktifken):**
+- Canlı grafik: X ekseni 0-20 dakika, Y ekseni 0-300°C, 4 seri: SET
+  (kırmızı), BT/Bean Temp (mavi), EXH/Exhaust (sarı), ROR x5 (yeşil,
+  RoR'un 5 katı ölçekle çizilmiş hali — okunabilirlik için). v2'deki
+  `TempGraph` şu an sadece tek seri (bean temp) çiziyor, bu 4 seriye
+  genişletilmeli.
+- "Machine Ready" durum metni (makine boştayken)
+- **Profil tablosu — bu, `ProfileStore`'un sakladığı asıl şemayı netleştiriyor:**
+  satırlar: Drop Down Temp, Hopper Open Time, Chaffing (sec), Chaffing
+  Time (sec), First Crack Temp, Second Crack Temp, DROP OUT TEMP. Her
+  satırın üç sütunu var: Temperature/Time (ana değer), Exhaust (%),
+  Flame (%) — yani her aşamanın kendi hedef sıcaklığı/süresi VE o
+  aşamadaki egzoz/alev yüzdesi ayrı ayrı tanımlanabiliyor. Muhtemel JSON
+  şeması:
+  ```json
+  {
+    "drop_down_temp": {"value": 0.0, "exhaust_pct": 0, "flame_pct": 0},
+    "hopper_open_time_sec": {"value": 0, "exhaust_pct": 0, "flame_pct": 0},
+    "chaffing_sec": {"value": 0, "exhaust_pct": 0, "flame_pct": 0},
+    "chaffing_time_sec": {"value": 0, "exhaust_pct": 0, "flame_pct": 0},
+    "first_crack_temp": {"value": 0.0, "exhaust_pct": 0, "flame_pct": 0},
+    "second_crack_temp": {"value": 0.0, "exhaust_pct": 0, "flame_pct": 0},
+    "drop_out_temp": {"value": 0.0, "exhaust_pct": 0, "flame_pct": 0}
+  }
+  ```
+  **Kullanıcı bu şemayı onayladı (2026-09-07).** `screens/home_screen.py`
+  içindeki `PROFILE_FIELDS` sabiti bu 7 satırı ve alan adlarını tanımlıyor.
+  `ProfileStore` zaten şemadan bağımsız (serbest dict) olduğu için bu
+  şema netleşince sadece UI tarafı (Make Profile ekranı) değişecek,
+  `ProfileStore`'un kendisi DEĞİŞMEYECEK.
+
+**Sonuç:** "zaman" ve "processler" dediği şey tam olarak bu sağ paneldeki
+Drying/Maillard/Development süreleri + yüzdeleri imiş. Bunlardan
+Roasting Time ve Rate Of Rise register'a ihtiyaç duymuyor — **aşağıda
+uygulandı**. Drying/Maillard/Development fazlarının SINIRLARI (hangi
+sıcaklıkta bir fazdan diğerine geçildiği) hâlâ belirsiz ve
+UYGULANMADI — muhtemelen aktif profildeki eşiklerden (first_crack_temp
+vb.) türetilebilir ama bu kesinleşmedi, tahmin etmek yerine bekletildi.
+
+## Modern görsel yenileme + RoastSession (2026-09-07)
+
+Kullanıcı, mevcut tasarımın (paylaşılan ekran görüntüsü) görsel olarak
+demode göründüğünü belirtti. Karar: **bilgi mimarisini** (sabit sol/sağ
+panel + değişen orta alan) korumak ama görsel dili tazelemek — komple
+farklı bir yaklaşıma geçmedik.
+
+### `services/roast_session.py`
+Register'dan tamamen bağımsız: `start()`/`stop()` ile "Profile Start"
+butonuna bağlı, `feed_sample(bean_temp)` ile beslenen bir pencereden
+(`ror_window`, varsayılan 60s) Rate of Rise (°C/dakika) ve elapsed time
+hesaplıyor. `tests/test_roast_session.py` — 12 test, sahte (enjekte
+edilebilir) saatle, gerçek zaman beklemeden çalışıyor, hepsi geçiyor.
+
+### `widgets/multi_temp_graph.py`
+Eski tek-serili `widgets/temp_graph.py`'nin yerini aldı (o dosya
+silindi). SET/BT/EXH/ROR olmak üzere 4 seriyi aynı eksende çiziyor;
+"hero" olarak işaretlenen seri (BT) altında yarı saydam bir dolgu var
+(`Mesh` + `triangle_strip` — dalgalı eğrilerde `triangle_fan`'ın
+üreteceği kendini-kesen üçgen sorununu önlemek için özellikle
+`triangle_strip` seçildi).
+
+### `screens/home_screen.py` — tamamen yeniden yazıldı
+- Sol panel: LED + Set/Egzoz (26sp) + **Bean Temp "hero" rakam (44sp)**.
+- Orta: `MultiTempGraph` + 3 sekmeli `TabbedPanel` (Profil / Manuel
+  Kontrol / **Make Profile** — bu üçüncü sekme yeni).
+- Sağ panel: Roasting Time, Rate Of Rise (+ max), **"Profile Start" /
+  "Durdur" butonu** — `RoastSession`'ı gerçekten başlatıp durduruyor.
+- **Make Profile sekmesi (yeni):** `PROFILE_FIELDS`'a göre 7 satır × 3
+  sütun (Değer/Exhaust%/Alev%) `TextInput` formu + profil adı + "Profili
+  Kaydet" butonu → `ProfileStore.save_profile()`. Sayısal doğrulama var
+  (geçersiz girişte toast ile hata, kaydetmiyor).
+- Tüm panel/grafik arka planları `RoundedRectangle` ile yuvarlatılmış
+  kart görünümünde (`<Card@BoxLayout>` KV kuralı).
+
+**Davranışsal olarak doğrulandı** (gerçek pencere, simülatöre karşı):
+kavurma başlatıldıktan ~4.5s sonra `roasting_time=00:04`,
+`ror=5.7 °C/dk` (`max=6.6`), 4 serinin hepsi grafik noktası biriktiriyor,
+Make Profile formundan kaydedilen profil (`first_crack_temp`: value=205,
+exhaust_pct=60, flame_pct=40) `ProfileStore`'dan doğru şemayla geri
+okundu ve Profil sekmesinde listelendi.
+
 ## Sırada ne var (henüz yazılmadı)
 
 Kullanıcıyla üzerinde anlaşılan sıra:
@@ -199,14 +310,23 @@ Kullanıcıyla üzerinde anlaşılan sıra:
 6. ~~`HomeScreen`'i sabit sıcaklık/grafik alanı + sekmeli (Profil/Manuel
    Kontrol) panel yapısına göre yeniden kurgulamak~~ ✅ (2026-09-07, bkz.
    "UI mimarisi — uygulandı" notu)
-7. **← BURADAYIZ.** `config/settings.py` şimdilik sadece bağlantı +
-   sıcaklık register'larını içeriyor (yer tutucu adreslerle, bkz. yukarı).
-   Gerçek register haritası (`RoasterInterface_Fonksiyon_Referansi.md`)
-   elde edilince: (a) bu dosyadaki sabitler güncellenecek, (b) "Manuel
-   Kontrol" sekmesine gerçek yazma butonları eklenecek, (c) kronometre ve
-   süreç aşaması göstergeleri eklenecek (hangi coil'e bağlı olduğu
-   netleşince). `.env` dosyası entegrasyonu da henüz yapılmadı.
-8. Launcher'ın gerçek entegrasyonu ve testi.
+7. ~~`HomeScreen`'i modern görsel dille + `RoastSession` (Roasting
+   Time/RoR) ile güçlendirmek, Make Profile sekmesi~~ ✅ (2026-09-07,
+   bkz. "Modern görsel yenileme" notu)
+8. **← BURADAYIZ / BEKLEMEDE.** Aşağıdakilerin hepsi gerçek register
+   haritasına (`RoasterInterface_Fonksiyon_Referansi.md`) bağımlı,
+   kullanıcı henüz bulamadı:
+   - `config/settings.py`'deki yer tutucu register adreslerini
+     gerçekleriyle değiştirmek
+   - "Manuel Kontrol" sekmesine gerçek yazma butonları eklemek
+   - Drying/Maillard/Development faz sınırlarını belirlemek (hangi
+     sıcaklık/coil'de bir fazdan diğerine geçildiği)
+   - Exhaust/Burner/Airflow gösterge (%) değerlerini gerçek register'a
+     bağlamak
+   - "Profile Start" butonunun PLC'ye gerçekten bir coil yazması (şu an
+     sadece yerel `RoastSession`'ı tetikliyor, PLC'yi başlatmıyor)
+   - `.env` entegrasyonu (host/port hâlâ sadece ortam değişkeni)
+9. Launcher'ın gerçek entegrasyonu ve testi.
 
 ## Dikkat edilmesi gerekenler
 
