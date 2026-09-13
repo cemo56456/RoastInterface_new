@@ -326,7 +326,107 @@ Kullanıcıyla üzerinde anlaşılan sıra:
    - "Profile Start" butonunun PLC'ye gerçekten bir coil yazması (şu an
      sadece yerel `RoastSession`'ı tetikliyor, PLC'yi başlatmıyor)
    - `.env` entegrasyonu (host/port hâlâ sadece ortam değişkeni)
-9. Launcher'ın gerçek entegrasyonu ve testi.
+9. ~~Launcher'ın gerçek entegrasyonu ve testi~~ ✅ (2026-09-07, bkz.
+   "Launcher yeniden yazıldı" notu — sadece gerçek üretim sunucusu
+   entegrasyonu kapsam dışı, çünkü kullanıcıda henüz yok)
+
+**Kalan her şey register haritasına, gerçek güncelleme sunucusuna, veya
+ekran/donanım bilgisine bağımlı** — hepsi kullanıcıdan bekleniyor (bkz.
+bu handoff'un en altındaki "Kullanıcıdan beklenen bilgiler" listesi).
+
+## Launcher yeniden yazıldı (2026-09-07)
+
+`launcher.py` artık bir **iskelet değil** — `ModbusTCPClient`/`ProfileStore`
+ile aynı kalıba taşındı: `Launcher` sınıfı, config `__init__`'te
+(`app_dir`, `manifest_url`, `backup_dir`, `temp_zip`, `timeout`), I/O
+metotları `(sonuç, hata)` tuple'ı döner.
+
+**Güvenlik düzeltmesi:** eski kod `zipfile.extractall()`'ı doğrudan
+çağırıyordu — kötü/bozuk bir zip `../../` gibi bir girişle `app_dir`
+dışına yazabilirdi (zip-slip). `apply_update()` artık her zip girişinin
+çözümlenmiş yolunun `app_dir` içinde kaldığını extract etmeden önce
+doğruluyor, değilse `(False, "Güvensiz zip girişi...")` dönüp hiçbir şey
+açmıyor.
+
+`tools/update_server_simulator.py` (yeni) — `modbus_simulator.py` ile
+aynı ruhta, sadece `http.server` kullanan minik bir sahte güncelleme
+sunucusu (`version.json` + `.zip` serve ediyor). `tests/test_launcher.py`
+— 21 test, bu sahte sunucuya karşı **gerçek** HTTP istekleri/indirmeler
+yapıyor (mock değil), artı zip-slip reddi, rollback, checksum uyuşmazlığı
+senaryoları. Tek mock edilen yer `launch_main_app` (`subprocess.Popen`)
+— bu makinede gerçek bir `main.exe` yok.
+
+`run()` metodu artık `sys.exit()` çağırmıyor (eski `main()` çağırıyordu)
+— böylece testler doğrudan çağırabiliyor. `sys.exit(0)`, `if __name__ ==
+"__main__":` bloğuna taşındı.
+
+**Kapsam dışı bırakılan (gerçek sunucu gerektiriyor):** gerçek güncelleme
+sunucusunun kurulması, `main.exe`'nin PyInstaller ile `onedir`
+paketlenip launcher'la uçtan uca denenmesi, `launcher.spec`. Kullanıcı
+gerçek sunucu bilgisini verdiğinde sadece `config/settings.py`'deki
+`LAUNCHER_MANIFEST_URL` değişecek.
+
+**Bug düzeltmesi (aynı gün, kullanıcı elle çalıştırınca yakaladı):**
+`run()`, `launch_main_app()` başarısız olunca `rollback()` sonrası
+**yedekten tekrar dener** — ama bu ikinci deneme `try/except` içinde
+DEĞİLDİ (orijinal iskelette de aynı hata vardı, ben de fark etmeden
+taşımışım). Bu geliştirme ortamında `app/main.exe` henüz yok (proje
+paketlenmedi) olduğu için ikinci deneme de gerçekten başarısız oluyor ve
+programı unhandled exception ile çökertiyordu — `python launcher.py`
+çalıştırıldığında bunu üretti. İkinci deneme de artık `try/except`
+içinde: başarısız olursa sadece hata basıp temiz çıkıyor.
+`tests/test_run_does_not_crash_when_main_app_missing_both_attempts` bu
+senaryoyu regresyon olarak kilitliyor.
+
+## Launcher görsel giriş ekranı (2026-09-08)
+
+Kullanıcı launcher'ın konsol yerine görsel bir "sürüm kontrol
+ediliyor / indiriliyor / başlatılıyor" ekranı göstermesini istedi.
+
+**`launcher.py` (`Launcher` sınıfı) genişletildi, hâlâ `kivy` import
+ETMİYOR** (bilinçli — saf mantık burada kalıyor, GUI ayrı dosyada):
+- `download_update(url, on_progress=None)` — `on_progress(indirilen,
+  toplam)` her chunk'ta çağrılır (`Content-Length` header'ından).
+- `run(on_status=None, on_progress=None) -> bool` — artık `None` yerine
+  `bool` dönüyor (`True`=başlatıldı, `False`=hiç başlatılamadı). Her
+  aşama geçişinde `on_status(mesaj)` çağırıyor ("Sürüm kontrol
+  ediliyor...", "Güncelleme indiriliyor...", "Checksum doğrulanıyor...",
+  "Başlatılıyor...", hata mesajları).
+- Bu, geriye dönük uyumlu değil — `run()`'ı çağıran her yer (`__main__`
+  bloğu, testler) dönüş değerini artık kullanabilir/kullanmalı.
+
+**`launcher_app.py` (yeni)** — `main.py`/`HomeScreen` ile aynı görsel dil
+(koyu tema, aynı accent renkleri). `LauncherApp`/`LauncherScreen`:
+uygulama adı, durum metni, `ProgressBar` (sadece indirirken görünür),
+yerel sürüm metni, hata durumunda kırmızı hata metni + "Kapat" butonu
+(pencere sessizce kapanmıyor, kullanıcıya ne olduğunu gösteriyor).
+`Launcher.run()` arka plan thread'inde çalışıyor,
+`on_status`/`on_progress` her biri `Clock.schedule_once` ile ana thread'e
+devrediyor — projenin "Kivy widget'larına sadece ana thread'den
+dokunulur" kuralı burada da korunuyor (bkz. `ModbusService`/`HomeScreen`
+ile aynı desen).
+
+**`launcher.py`'nin `__main__` bloğu artık "headless yedek"** olarak
+işaretlendi (GUI'siz debug/CI için) — asıl PyInstaller hedefi ve
+masaüstü kısayolu `launcher_app.py`'yi hedeflemeli.
+
+**Davranışsal olarak doğrulandı** (gerçek pencere, yerel
+`update_server_simulator`'a karşı, 3 senaryo):
+1. Güncelleme var → indirme gerçekleşti, `progress_value` %100'e ulaştı.
+   Ardından "yeni" main.exe de gerçek bir çalıştırılabilir olmadığı için
+   (test senaryosu kasıtlı) başlatma başarısız oldu → `rollback()`
+   sürümü 1.0.0'a geri aldı, ekran net bir hata gösterdi (çökme yok) —
+   bu, "başarılı indirilen ama çalışmayan güncellemeyi kalıcı sayma"
+   davranışının **doğru** çalıştığının kanıtı.
+2. Güncelleme yok + `launch_main_app` mock'landı (gerçek `.exe` yok) →
+   `status_text="Başlatıldı"`, `has_error=False`, pencere kendiliğinden
+   kapandı.
+3. Manifest sunucusuna hiç ulaşılamıyor → çökmeden devam etti, yine
+   başlatmayı denedi (mock olmadığı için beklendiği gibi başarısız oldu,
+   temiz hata ekranı gösterdi).
+
+**Kapsam dışı:** gerçek logo/ikon, borderless/frameless pencere,
+`launcher.spec`/PyInstaller paketleme — hâlâ bekliyor.
 
 ## Dikkat edilmesi gerekenler
 
@@ -340,3 +440,21 @@ Kullanıcıyla üzerinde anlaşılan sıra:
   ayrıntılı bir referans, önceki analiz oturumunda çıkarılan
   `RoasterInterface_Fonksiyon_Referansi.md` dosyasında mevcut (kullanıcıda
   duruyor olmalı).
+
+## Kullanıcıdan beklenen bilgiler
+
+İlerlemeyi doğrudan engelleyen açık sorular:
+
+1. **`RoasterInterface_Fonksiyon_Referansi.md`** — gerçek register/coil
+   haritası (sıcaklıklar, start/stop coil'i, süreç aşaması coil'leri,
+   manuel kontrol register'ları).
+2. **Gerçek güncelleme sunucusu** — manifest URL, sertifika vb. (2026-09-07
+   itibarıyla "henüz yok" onaylandı).
+3. **MQTT** — orijinal projede kimlik bilgileri koda gömülüydü
+   (`.env`'e taşınacaktı) ama v2 planında MQTT hiç yok. Ne için
+   kullanılıyordu, v2'de gerekli mi?
+4. **Ekran/donanım bilgisi** — gerçek HMI panelinin çözünürlüğü/boyutu.
+
+Orta öncelik / senin kararına bağlı:
+- Drying/Maillard/Development faz sınırlarının nasıl belirleneceği
+  (muhtemelen aktif profildeki eşiklerden türetilecek, ama onaylanmadı).

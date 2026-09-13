@@ -43,3 +43,18 @@ TEMP_SCALE = 10
 # --------------------------------------------------------------------- #
 
 PROFILES_DIR = os.environ.get("PROFILES_DIR", "profiles")
+
+# --------------------------------------------------------------------- #
+# Launcher / OTA güncelleme
+# --------------------------------------------------------------------- #
+
+# YER TUTUCU — kullanıcının henüz gerçek bir güncelleme sunucusu yok.
+# Sunucu hazır olduğunda sadece bu satır değişecek.
+LAUNCHER_MANIFEST_URL = os.environ.get(
+    "LAUNCHER_MANIFEST_URL", "https://ORNEK-SUNUCUNUZ/roasterinterface/version.json"
+)
+LAUNCHER_TIMEOUT = float(os.environ.get("LAUNCHER_TIMEOUT", "5.0"))
+
+# Ana uygulamanın (main.exe) kurulu olduğu klasör — launcher'ın kendi
+# konumuna göre relatif.
+LAUNCHER_APP_DIR = os.environ.get("LAUNCHER_APP_DIR", "app")

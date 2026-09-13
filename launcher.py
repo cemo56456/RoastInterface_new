@@ -1,116 +1,263 @@
 """
-launcher.py — RoasterInterface güncelleme başlatıcısı (iskelet).
+launcher.py — RoasterInterface güncelleme mantığı (`Launcher` sınıfı).
 
-Bu ayrı bir PyInstaller hedefi olarak derlenir (launcher.spec).
-Masaüstü kısayolu artık main.exe yerine bunu çalıştırır.
+Bilinçli olarak `kivy` import ETMEZ — saf mantık burada, görsel arayüz
+`launcher_app.py`'de. Masaüstü kısayolu (ve PyInstaller hedefi) asıl
+olarak `launcher_app.py`'yi çalıştıracak; bu dosyanın `__main__` bloğu
+sadece GUI'siz/headless bir yedek (debug, CI gibi görüntü olmayan
+ortamlar için).
+
+Diğer servislerle (`ModbusTCPClient`, `ProfileStore`) aynı kalıp: tek bir
+sınıf, config `__init__`'te, I/O metotları `(sonuç, hata)` tuple'ı döner.
+Bu sayede gerçek bir güncelleme sunucusu olmadan da (bkz.
+`tools/update_server_simulator.py`) uçtan uca test edilebiliyor —
+`app_dir`/`manifest_url` dışarıdan verildiği için testler bunları geçici
+dizinlere ve yerel sahte sunucuya yönlendirebiliyor.
+
+**`LAUNCHER_MANIFEST_URL` şu an YER TUTUCUDUR** (bkz. config/settings.py)
+— kullanıcının henüz gerçek bir güncelleme sunucusu yok.
 """
 
+from __future__ import annotations
+
 import hashlib
-import json
 import shutil
 import subprocess
-import sys
 import zipfile
 from pathlib import Path
+from typing import Callable
 
 import requests
 
-APP_DIR = Path(__file__).parent / "app"          # ana uygulamanın kurulu olduğu klasör
-VERSION_FILE = APP_DIR / "version.txt"
-BACKUP_DIR = Path(__file__).parent / "app_backup"
-MANIFEST_URL = "https://ORNEK-SUNUCUNUZ/roasterinterface/version.json"
-TEMP_ZIP = Path(__file__).parent / "_update.zip"
 
+class Launcher:
+    def __init__(
+        self,
+        app_dir: str | Path,
+        manifest_url: str,
+        backup_dir: str | Path | None = None,
+        temp_zip: str | Path | None = None,
+        timeout: float = 5.0,
+    ):
+        self.app_dir = Path(app_dir)
+        self.version_file = self.app_dir / "version.txt"
+        self.manifest_url = manifest_url
+        self.backup_dir = Path(backup_dir) if backup_dir else self.app_dir.parent / "app_backup"
+        self.temp_zip = Path(temp_zip) if temp_zip else self.app_dir.parent / "_update.zip"
+        self.timeout = timeout
 
-def get_local_version() -> str:
-    if VERSION_FILE.exists():
-        return VERSION_FILE.read_text().strip()
-    return "0.0.0"
+    # ------------------------------------------------------------------ #
+    # Sürüm bilgisi
+    # ------------------------------------------------------------------ #
 
+    def get_local_version(self) -> str:
+        if self.version_file.exists():
+            return self.version_file.read_text().strip()
+        return "0.0.0"
 
-def fetch_remote_manifest() -> dict | None:
-    try:
-        resp = requests.get(MANIFEST_URL, timeout=5)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        print(f"[launcher] Manifest alınamadı, mevcut sürümle devam: {e}")
-        return None
+    @staticmethod
+    def is_update_needed(local: str, remote: str) -> bool:
+        return tuple(map(int, remote.split("."))) > tuple(map(int, local.split(".")))
 
+    # ------------------------------------------------------------------ #
+    # Ağ işlemleri
+    # ------------------------------------------------------------------ #
 
-def is_update_needed(local: str, remote: str) -> bool:
-    # Basit karşılaştırma; gerekirse 'packaging.version' kullanılabilir
-    return tuple(map(int, remote.split("."))) > tuple(map(int, local.split(".")))
-
-
-def download_update(url: str) -> Path:
-    with requests.get(url, stream=True, timeout=30) as r:
-        r.raise_for_status()
-        with open(TEMP_ZIP, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1 << 16):
-                f.write(chunk)
-    return TEMP_ZIP
-
-
-def verify_checksum(file_path: Path, expected_sha256: str) -> bool:
-    h = hashlib.sha256()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 16), b""):
-            h.update(chunk)
-    return h.hexdigest().lower() == expected_sha256.lower()
-
-
-def backup_current_app():
-    if BACKUP_DIR.exists():
-        shutil.rmtree(BACKUP_DIR)
-    shutil.copytree(APP_DIR, BACKUP_DIR)
-
-
-def apply_update(zip_path: Path):
-    backup_current_app()
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(APP_DIR)
-    zip_path.unlink(missing_ok=True)
-
-
-def rollback():
-    if BACKUP_DIR.exists():
-        if APP_DIR.exists():
-            shutil.rmtree(APP_DIR)
-        shutil.move(str(BACKUP_DIR), str(APP_DIR))
-        print("[launcher] Güncelleme başarısız, önceki sürüme dönüldü.")
-
-
-def launch_main_app():
-    main_exe = APP_DIR / "main.exe"
-    subprocess.Popen([str(main_exe)])
-
-
-def main():
-    local_version = get_local_version()
-    manifest = fetch_remote_manifest()
-
-    if manifest and is_update_needed(local_version, manifest["version"]):
+    def fetch_remote_manifest(self) -> tuple[dict | None, str | None]:
         try:
-            print(f"[launcher] Yeni sürüm bulundu: {manifest['version']}")
-            zip_path = download_update(manifest["url"])
-            if not verify_checksum(zip_path, manifest["sha256"]):
-                raise ValueError("Checksum uyuşmuyor, indirilen dosya güvenilmez.")
-            apply_update(zip_path)
-            VERSION_FILE.write_text(manifest["version"])
+            resp = requests.get(self.manifest_url, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.json(), None
         except Exception as e:
-            print(f"[launcher] Güncelleme başarısız: {e}")
-            rollback()
+            return None, f"Manifest alınamadı: {e}"
 
-    try:
-        launch_main_app()
-    except Exception as e:
-        print(f"[launcher] Ana uygulama başlatılamadı: {e}")
-        rollback()
-        launch_main_app()  # yedekle tekrar dene
+    def download_update(
+        self, url: str, on_progress: Callable[[int, int], None] | None = None
+    ) -> tuple[Path | None, str | None]:
+        """`on_progress(indirilen_bayt, toplam_bayt)` her chunk'ta çağrılır.
 
-    sys.exit(0)
+        `toplam_bayt`, sunucu `Content-Length` göndermezse `0` olur —
+        çağıran taraf bunu "belirsiz ilerleme" olarak yorumlamalı.
+        """
+        try:
+            with requests.get(url, stream=True, timeout=self.timeout * 6) as r:
+                r.raise_for_status()
+                total = int(r.headers.get("Content-Length", 0))
+                downloaded = 0
+                with open(self.temp_zip, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1 << 16):
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if on_progress is not None:
+                            on_progress(downloaded, total)
+        except Exception as e:
+            return None, f"İndirme başarısız: {e}"
+
+        return self.temp_zip, None
+
+    # ------------------------------------------------------------------ #
+    # Doğrulama ve uygulama
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def verify_checksum(file_path: str | Path, expected_sha256: str) -> bool:
+        h = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 16), b""):
+                h.update(chunk)
+        return h.hexdigest().lower() == expected_sha256.lower()
+
+    def backup_current_app(self) -> None:
+        if self.backup_dir.exists():
+            shutil.rmtree(self.backup_dir)
+        if self.app_dir.exists():
+            shutil.copytree(self.app_dir, self.backup_dir)
+
+    def apply_update(self, zip_path: str | Path) -> tuple[bool, str | None]:
+        zip_path = Path(zip_path)
+
+        try:
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                # zip-slip koruması: her girişin çözümlenmiş yolu app_dir
+                # dışına çıkarsa (ör. "../../evil.txt") hiçbir şey açmadan
+                # reddet. `extractall()` bunu kendisi kontrol etmiyor.
+                app_dir_resolved = self.app_dir.resolve()
+                for member in zf.namelist():
+                    target = (self.app_dir / member).resolve()
+                    if not (target == app_dir_resolved or app_dir_resolved in target.parents):
+                        return False, f"Güvensiz zip girişi (zip-slip): {member!r}"
+
+                self.backup_current_app()
+                zf.extractall(self.app_dir)
+        except (OSError, zipfile.BadZipFile) as e:
+            return False, f"Güncelleme uygulanamadı: {e}"
+
+        zip_path.unlink(missing_ok=True)
+        return True, None
+
+    def rollback(self) -> tuple[bool, str | None]:
+        if not self.backup_dir.exists():
+            return False, "Yedek bulunamadı, geri dönülemedi"
+
+        try:
+            if self.app_dir.exists():
+                shutil.rmtree(self.app_dir)
+            shutil.move(str(self.backup_dir), str(self.app_dir))
+        except OSError as e:
+            return False, f"Geri dönüş başarısız: {e}"
+
+        return True, None
+
+    # ------------------------------------------------------------------ #
+    # Ana uygulamayı başlatma
+    # ------------------------------------------------------------------ #
+
+    def launch_main_app(self) -> subprocess.Popen:
+        main_exe = self.app_dir / "main.exe"
+        return subprocess.Popen([str(main_exe)])
+
+    # ------------------------------------------------------------------ #
+    # Orkestrasyon
+    # ------------------------------------------------------------------ #
+
+    def run(
+        self,
+        on_status: Callable[[str], None] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> bool:
+        """Sürüm kontrolü + güncelleme + başlatma akışının tamamı.
+
+        `on_status(mesaj)` her aşama geçişinde çağrılır (bir GUI'nin
+        "Sürüm kontrol ediliyor...", "İndiriliyor...", "Başlatılıyor..."
+        gibi durum metnini güncellemesi için). `on_progress(indirilen,
+        toplam)` sadece indirme sırasında çağrılır — bkz.
+        `download_update`.
+
+        Ana uygulama hiç başlatılamazsa (yedekten sonra bile) `False`,
+        aksi halde `True` döner. Hiçbir zaman exception fırlatmaz —
+        `sys.exit()` de çağırmaz, çağıran taraf (`__main__` bloğu veya
+        bir GUI) sonucu görüp karar verir. Bu, testlerin `run()`'ı
+        doğrudan çağırabilmesi için bilinçli bir tasarım (aksi halde her
+        test süreci sonlandırırdı).
+        """
+
+        def status(msg: str) -> None:
+            print(f"[launcher] {msg}")
+            if on_status is not None:
+                on_status(msg)
+
+        status("Sürüm kontrol ediliyor...")
+        local_version = self.get_local_version()
+        manifest, err = self.fetch_remote_manifest()
+
+        if manifest is not None and err is None and self.is_update_needed(local_version, manifest["version"]):
+            status(f"Yeni sürüm bulundu: {manifest['version']}")
+            update_ok = self._download_and_apply(manifest, on_status=status, on_progress=on_progress)
+            if not update_ok:
+                self.rollback()
+        elif err is not None:
+            status("Sürüm kontrolü atlandı (güncelleme sunucusuna ulaşılamadı)")
+        else:
+            status("Güncel sürümdesiniz")
+
+        status("Başlatılıyor...")
+        try:
+            self.launch_main_app()
+        except OSError as e:
+            status(f"Ana uygulama başlatılamadı: {e}")
+            self.rollback()
+            try:
+                self.launch_main_app()  # yedekle tekrar dene
+            except OSError as e2:
+                status(f"Ana uygulama yedekten de başlatılamadı: {e2}")
+                return False
+
+        return True
+
+    def _download_and_apply(
+        self,
+        manifest: dict,
+        on_status: Callable[[str], None] | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> bool:
+        def status(msg: str) -> None:
+            print(f"[launcher] {msg}")
+            if on_status is not None:
+                on_status(msg)
+
+        status("Güncelleme indiriliyor...")
+        zip_path, err = self.download_update(manifest["url"], on_progress=on_progress)
+        if err is not None:
+            status(f"Güncelleme başarısız: {err}")
+            return False
+
+        status("Checksum doğrulanıyor...")
+        if not self.verify_checksum(zip_path, manifest["sha256"]):
+            status("Güncelleme başarısız: checksum uyuşmuyor, indirilen dosya güvenilmez.")
+            return False
+
+        status("Güncelleme uygulanıyor...")
+        ok, err = self.apply_update(zip_path)
+        if not ok:
+            status(f"Güncelleme başarısız: {err}")
+            return False
+
+        self.version_file.write_text(manifest["version"])
+        return True
 
 
 if __name__ == "__main__":
-    main()
+    # Headless yedek — asıl GUI girişi launcher_app.py. Görüntü sunucusu
+    # olmayan bir ortamda (CI, elle debug) hâlâ konsoldan çalıştırılabilsin
+    # diye burada bırakıldı.
+    import sys
+
+    from config import settings
+
+    launcher = Launcher(
+        app_dir=Path(__file__).parent / settings.LAUNCHER_APP_DIR,
+        manifest_url=settings.LAUNCHER_MANIFEST_URL,
+        timeout=settings.LAUNCHER_TIMEOUT,
+    )
+    ok = launcher.run()
+    sys.exit(0 if ok else 1)
