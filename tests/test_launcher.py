@@ -206,7 +206,9 @@ def test_launch_main_app_calls_popen_with_correct_path(launcher, monkeypatch):
 
     launcher.launch_main_app()
 
-    mock_popen.assert_called_once_with([str(launcher.app_dir / "main.exe")])
+    mock_popen.assert_called_once_with(
+        [str(launcher.app_dir / "main.exe")], cwd=str(launcher.app_dir)
+    )
 
 
 def test_launch_main_app_uses_dev_main_script_when_set(launcher, monkeypatch, tmp_path):
@@ -220,7 +222,9 @@ def test_launch_main_app_uses_dev_main_script_when_set(launcher, monkeypatch, tm
 
     launcher.launch_main_app()
 
-    mock_popen.assert_called_once_with([sys.executable, str(script)])
+    mock_popen.assert_called_once_with(
+        [sys.executable, str(script)], cwd=str(launcher.app_dir)
+    )
 
 
 def test_run_does_not_crash_when_main_app_missing_both_attempts(launcher, update_server):

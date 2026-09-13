@@ -5,3 +5,13 @@ build/
 dist/
 .env
 .venv/
+
+# tools/dev_seed_app.py + tools/dev_release_update.py tarafından
+# üretilen geliştirme-zamanı klasörler/dosyalar — hiçbiri kaynak kod
+# değil, hepsi bu araçlarla yeniden üretilebilir.
+/app/
+/app_backup/
+_update.zip
+_dev_release.zip
+_seed_build.zip
+profiles/

@@ -163,12 +163,22 @@ class Launcher:
     # ------------------------------------------------------------------ #
 
     def launch_main_app(self) -> subprocess.Popen:
+        # cwd=app_dir: paketlenmiş uygulama kendi klasöründeki (ör. profiles/,
+        # config dosyaları gibi relatif yollara dayanan) şeyleri kendi
+        # klasöründen bulmalı — launcher'ın nereden çalıştırıldığından
+        # bağımsız olarak.
         if self.dev_main_script is not None:
-            # GEÇİCİ geliştirme yolu — bkz. __init__'teki not.
-            return subprocess.Popen([sys.executable, str(self.dev_main_script)])
+            # GEÇİCİ geliştirme yolu — bkz. __init__'teki not. Gerçek
+            # main.exe yerine app_dir içindeki main.py'yi çalıştırır; bu
+            # sayede indirilip app_dir'e UYGULANMIŞ bir güncelleme
+            # gerçekten çalıştırılan şeyi de değiştirir (bkz.
+            # tools/dev_seed_app.py + tools/dev_release_update.py).
+            return subprocess.Popen(
+                [sys.executable, str(self.dev_main_script)], cwd=str(self.app_dir)
+            )
 
         main_exe = self.app_dir / "main.exe"
-        return subprocess.Popen([str(main_exe)])
+        return subprocess.Popen([str(main_exe)], cwd=str(self.app_dir))
 
     # ------------------------------------------------------------------ #
     # Orkestrasyon
@@ -266,12 +276,16 @@ if __name__ == "__main__":
     # diye burada bırakıldı.
     from config import settings
 
+    app_dir = Path(__file__).parent / settings.LAUNCHER_APP_DIR
+
     dev_main_script = None
     if settings.LAUNCHER_DEV_MAIN_SCRIPT:
-        dev_main_script = Path(__file__).parent / settings.LAUNCHER_DEV_MAIN_SCRIPT
+        # app_dir'e göre (proje köküne göre DEĞİL) — böylece app_dir'e
+        # UYGULANMIŞ bir güncelleme gerçekten çalıştırılan şeyi değiştirir.
+        dev_main_script = app_dir / settings.LAUNCHER_DEV_MAIN_SCRIPT
 
     launcher = Launcher(
-        app_dir=Path(__file__).parent / settings.LAUNCHER_APP_DIR,
+        app_dir=app_dir,
         manifest_url=settings.LAUNCHER_MANIFEST_URL,
         timeout=settings.LAUNCHER_TIMEOUT,
         dev_main_script=dev_main_script,

@@ -129,7 +129,9 @@ class LauncherApp(App):
         app_dir = Path(__file__).parent / settings.LAUNCHER_APP_DIR
         dev_main_script = None
         if settings.LAUNCHER_DEV_MAIN_SCRIPT:
-            dev_main_script = Path(__file__).parent / settings.LAUNCHER_DEV_MAIN_SCRIPT
+            # app_dir'e göre (proje köküne göre DEĞİL) — böylece app_dir'e
+            # UYGULANMIŞ bir güncelleme gerçekten çalıştırılan şeyi değiştirir.
+            dev_main_script = app_dir / settings.LAUNCHER_DEV_MAIN_SCRIPT
 
         self.launcher = Launcher(
             app_dir=app_dir,

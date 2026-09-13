@@ -456,6 +456,63 @@ launcher.py` çalıştırıldığında artık hatasız çıkıyor (`EXIT: 0`) ve
 gerçekten `main.py`'yi (venv Python'ıyla) başlatıyor — process listesinde
 doğrulandı.
 
+**Aynı gün, bir sonraki adımda düzeltildi:** İlk hâliyle
+`dev_main_script` proje köküne göre çözümleniyordu (`Path(__file__).parent
+/ "main.py"`) — yani her zaman AYNI sabit `main.py`'yi çalıştırıyordu,
+`app/` klasörüne hiç bakmadan. Bu, indirilip `app/`'a UYGULANMIŞ bir
+güncellemenin gerçekten çalıştırılan şeyi değiştirmediği anlamına
+geliyordu — kullanıcı bunu fark edip sorguladı ("yeni bir güncelleme
+yaptığımda launcher görecek mi?"). Düzeltildi: `dev_main_script` artık
+`app_dir`'e göre çözümleniyor (`app_dir / "main.py"`), yani gerçek
+`main.exe` mantığıyla birebir aynı yeri (app_dir) kullanıyor — sadece
+`.exe` yerine `python ...` ile çalıştırıyor. Ayrıca `launch_main_app()`
+artık her iki yolda da (`main.exe` ve dev script) `cwd=app_dir` ile
+başlatıyor — paketlenmiş uygulama kendi klasöründeki relatif yolları
+(profiles/ vb.) launcher'ın çalıştırıldığı yerden değil, kendi
+klasöründen bulmalı.
+
+## Gerçek güncelleme akışını yerelde (paketleme olmadan) test etme
+
+Yukarıdaki düzeltme sayesinde artık launcher'ın **tam üretim akışını**
+(sürüm kontrolü → indir → checksum → `app/`'a uygula → başlat) hiçbir
+PyInstaller paketlemesi yapmadan, yerelde gerçekten deneyebiliyoruz. Bunun
+için üç yeni geliştirme aracı eklendi (hiçbiri şipping edilen uygulamaya
+dahil değil, sadece `tools/`):
+
+- **`tools/dev_app_builder.py`** — projenin çalışma zamanı dosyalarını
+  (`main.py` + `config/`, `screens/`, `services/`, `widgets/`) bir zip'e
+  paketleyen saf fonksiyon (`build_runtime_zip`). 4 testi var
+  (`tests/test_dev_app_builder.py`), gerçek bu depo üzerinde çalışıp
+  zip içeriğini doğruluyor.
+- **`tools/dev_seed_app.py`** — `app/` klasörünü "zaten 1.0.0 kurulu"
+  gibi başlangıç durumuna getiriyor (bir kurulum programının yapacağı
+  işi elle simüle ediyor — henüz kurulum programımız yok).
+- **`tools/dev_release_update.py <versiyon>`** — mevcut kaynak kodu
+  "yeni sürüm" olarak paketleyip yerel sahte sunucudan yayınlıyor,
+  `LAUNCHER_MANIFEST_URL` olarak kullanılacak adresi ekrana basıyor.
+
+**Uçtan uca gerçekten denendi ve doğrulandı** (2026-09-13): `dev_seed_app`
+ile `app/` "1.0.0" olarak kuruldu → `dev_release_update.py 1.1.0` ile
+"1.1.0" yayınlandı → `LAUNCHER_MANIFEST_URL` o adrese ayarlanıp
+`python launcher.py` çalıştırıldı → çıktı: "Yeni sürüm bulundu: 1.1.0" →
+indirildi → checksum doğrulandı → uygulandı → **`app/version.txt` gerçekten
+"1.1.0" oldu** → güncellenmiş `app/main.py` gerçekten başlatıldı (process
+listesinde doğrulandı). Bu, kullanıcının tarif ettiği akışın ("launcher
+açılacak, güncelleme varsa uygulayacak, güncellenmiş main açılacak")
+gerçekten çalıştığının kanıtı.
+
+`.gitignore`'a `/app/`, `/app_backup/`, `_update.zip`, `_dev_release.zip`,
+`_seed_build.zip`, `profiles/` eklendi — bunların hiçbiri kaynak kod
+değil, hepsi bu araçlarla yeniden üretilebilir.
+
+**Mimari karar (kullanıcı onayladı):** Gerçek kurulumda `app/` klasörü
+kullanıcının kendi yazma izni olan bir yere kurulacak (ör.
+`%LOCALAPPDATA%\RoasterInterface`), **Program Files'a DEĞİL** — bu sayede
+launcher'ın güncelleme uygulaması için Windows'tan admin izni
+(UAC) istemesine hiç gerek kalmıyor. Bu, PyInstaller paketlemesi
+yapılırken hatırlanmalı (kurulum programı `app/`'ı oraya kuracak,
+`LAUNCHER_APP_DIR`/`app_dir` de gerçek üretimde bu yolu göstermeli).
+
 ## Dikkat edilmesi gerekenler
 
 - Kullanıcı Türkçe konuşuyor, kod içi yorumlar Türkçe, tanımlayıcılar
