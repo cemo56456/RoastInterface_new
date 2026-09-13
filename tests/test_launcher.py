@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import sys
 import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -206,6 +207,20 @@ def test_launch_main_app_calls_popen_with_correct_path(launcher, monkeypatch):
     launcher.launch_main_app()
 
     mock_popen.assert_called_once_with([str(launcher.app_dir / "main.exe")])
+
+
+def test_launch_main_app_uses_dev_main_script_when_set(launcher, monkeypatch, tmp_path):
+    """GEÇİCİ geliştirme modu: dev_main_script verilmişse main.exe yerine
+    `python <script>` çalıştırılmalı (bkz. launcher.py __init__ notu)."""
+    mock_popen = MagicMock()
+    monkeypatch.setattr("launcher.subprocess.Popen", mock_popen)
+
+    script = tmp_path / "main.py"
+    launcher.dev_main_script = script
+
+    launcher.launch_main_app()
+
+    mock_popen.assert_called_once_with([sys.executable, str(script)])
 
 
 def test_run_does_not_crash_when_main_app_missing_both_attempts(launcher, update_server):

@@ -12,6 +12,11 @@ Mimari kural (projenin geri kalanıyla aynı, bkz. services/modbus_service.py
 çalıştırılıyor ki asıl network/dosya G/Ç'si Kivy'nin ana thread'ini
 bloklamasın. `on_status`/`on_progress` callback'leri widget'lara DOĞRUDAN
 dokunmuyor — her biri `Clock.schedule_once` ile ana thread'e devrediyor.
+
+Not: `main.exe` henüz paketlenmediği için (bkz. handoff.md) şu an
+`config/settings.py`'deki `LAUNCHER_DEV_MAIN_SCRIPT` (varsayılan
+"main.py") devrede — başarılı bir "başlatma" aslında `python main.py`
+çalıştırıyor. Gerçek paketleme yapılınca bu ayar boşaltılmalı.
 """
 
 from __future__ import annotations
@@ -122,10 +127,15 @@ class LauncherApp(App):
         self.screen = LauncherScreen()
 
         app_dir = Path(__file__).parent / settings.LAUNCHER_APP_DIR
+        dev_main_script = None
+        if settings.LAUNCHER_DEV_MAIN_SCRIPT:
+            dev_main_script = Path(__file__).parent / settings.LAUNCHER_DEV_MAIN_SCRIPT
+
         self.launcher = Launcher(
             app_dir=app_dir,
             manifest_url=settings.LAUNCHER_MANIFEST_URL,
             timeout=settings.LAUNCHER_TIMEOUT,
+            dev_main_script=dev_main_script,
         )
         self.screen.version_text = f"Sürüm: {self.launcher.get_local_version()}"
 

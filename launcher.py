@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import shutil
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from typing import Callable
@@ -38,6 +39,7 @@ class Launcher:
         backup_dir: str | Path | None = None,
         temp_zip: str | Path | None = None,
         timeout: float = 5.0,
+        dev_main_script: str | Path | None = None,
     ):
         self.app_dir = Path(app_dir)
         self.version_file = self.app_dir / "version.txt"
@@ -45,6 +47,14 @@ class Launcher:
         self.backup_dir = Path(backup_dir) if backup_dir else self.app_dir.parent / "app_backup"
         self.temp_zip = Path(temp_zip) if temp_zip else self.app_dir.parent / "_update.zip"
         self.timeout = timeout
+
+        # GEÇİCİ (bkz. launch_main_app): main.py henüz PyInstaller ile
+        # main.exe'ye paketlenmedi. dev_main_script verilirse, launcher
+        # gerçek bir .exe aramak yerine bu Python dosyasını `python ...`
+        # ile çalıştırır. PyInstaller paketlemesi yapıldığında bu
+        # parametre (ve launch_main_app'teki dallanma) tamamen
+        # kaldırılmalı — üretimde her zaman gerçek main.exe kullanılacak.
+        self.dev_main_script = Path(dev_main_script) if dev_main_script else None
 
     # ------------------------------------------------------------------ #
     # Sürüm bilgisi
@@ -153,6 +163,10 @@ class Launcher:
     # ------------------------------------------------------------------ #
 
     def launch_main_app(self) -> subprocess.Popen:
+        if self.dev_main_script is not None:
+            # GEÇİCİ geliştirme yolu — bkz. __init__'teki not.
+            return subprocess.Popen([sys.executable, str(self.dev_main_script)])
+
         main_exe = self.app_dir / "main.exe"
         return subprocess.Popen([str(main_exe)])
 
@@ -250,14 +264,17 @@ if __name__ == "__main__":
     # Headless yedek — asıl GUI girişi launcher_app.py. Görüntü sunucusu
     # olmayan bir ortamda (CI, elle debug) hâlâ konsoldan çalıştırılabilsin
     # diye burada bırakıldı.
-    import sys
-
     from config import settings
+
+    dev_main_script = None
+    if settings.LAUNCHER_DEV_MAIN_SCRIPT:
+        dev_main_script = Path(__file__).parent / settings.LAUNCHER_DEV_MAIN_SCRIPT
 
     launcher = Launcher(
         app_dir=Path(__file__).parent / settings.LAUNCHER_APP_DIR,
         manifest_url=settings.LAUNCHER_MANIFEST_URL,
         timeout=settings.LAUNCHER_TIMEOUT,
+        dev_main_script=dev_main_script,
     )
     ok = launcher.run()
     sys.exit(0 if ok else 1)

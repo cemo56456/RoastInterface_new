@@ -428,6 +428,34 @@ masaüstü kısayolu `launcher_app.py`'yi hedeflemeli.
 **Kapsam dışı:** gerçek logo/ikon, borderless/frameless pencere,
 `launcher.spec`/PyInstaller paketleme — hâlâ bekliyor.
 
+## Launcher → main.py geliştirme modu (2026-09-13)
+
+`main.py` henüz `main.exe`'ye paketlenmediği için (PyInstaller adımı
+kapsam dışı bırakılmıştı), launcher'ı çalıştırdığında `app/main.exe`
+bulunamıyor, "başlatılamadı" hatası veriyordu — kullanıcı bunu fark etti.
+
+**Geçici çözüm eklendi:** `Launcher.__init__`'e `dev_main_script`
+parametresi. Doluysa `launch_main_app()`, `main.exe` aramak yerine
+`subprocess.Popen([sys.executable, dev_main_script])` ile çalıştırıyor —
+yani gerçekten `python main.py` çalıştırıyor. `config/settings.py`'deki
+`LAUNCHER_DEV_MAIN_SCRIPT` (varsayılan `"main.py"`, **geliştirme
+kolaylığı için açık**) hem `launcher.py`'nin `__main__` bloğuna hem
+`launcher_app.py`'nin `build()`'ine bağlandı.
+
+**⚠️ Gerçek paketleme yapıldığında (PyInstaller, `launcher.spec`)
+`LAUNCHER_DEV_MAIN_SCRIPT` boş stringe (`""`) çekilmeli** — yoksa
+launcher üretimde bile `main.exe` yerine bu Python dosyasını çalıştırmaya
+çalışır (kullanıcının makinesinde Python/Kivy kurulu olmadığı için orada
+zaten sessizce başarısız olur, ama niyet bu değil). `launcher.py`
+içindeki `dev_main_script` parametresi ve ilgili dallanma da o noktada
+tamamen kaldırılabilir — sadece geliştirme köprüsüydü.
+
+Yeni test: `test_launch_main_app_uses_dev_main_script_when_set`
+(`tests/test_launcher.py`). Gerçek pencerede doğrulandı: `python
+launcher.py` çalıştırıldığında artık hatasız çıkıyor (`EXIT: 0`) ve
+gerçekten `main.py`'yi (venv Python'ıyla) başlatıyor — process listesinde
+doğrulandı.
+
 ## Dikkat edilmesi gerekenler
 
 - Kullanıcı Türkçe konuşuyor, kod içi yorumlar Türkçe, tanımlayıcılar

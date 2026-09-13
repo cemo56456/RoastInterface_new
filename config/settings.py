@@ -58,3 +58,14 @@ LAUNCHER_TIMEOUT = float(os.environ.get("LAUNCHER_TIMEOUT", "5.0"))
 # Ana uygulamanın (main.exe) kurulu olduğu klasör — launcher'ın kendi
 # konumuna göre relatif.
 LAUNCHER_APP_DIR = os.environ.get("LAUNCHER_APP_DIR", "app")
+
+# GEÇİCİ — main.py henüz PyInstaller ile main.exe'ye paketlenmedi (bkz.
+# handoff.md). Bu dolu olduğu sürece launcher, app/main.exe aramak yerine
+# `python <bu değer>`'i çalıştırır — böylece launcher'dan gerçekten ana
+# uygulamaya geçilebiliyor. Varsayılan olarak "main.py" (geliştirme
+# kolaylığı için AÇIK) — gerçek paketleme yapılıp launcher.exe/main.exe
+# üretilince bu satır boş stringe ("") çekilmeli, aksi halde launcher
+# üretimde bile main.exe yerine Python kaynak kodunu çalıştırmaya
+# çalışır (kullanıcının makinesinde Python/Kivy kurulu olmadığı için
+# orada zaten çalışmaz, ama niyet bu değil).
+LAUNCHER_DEV_MAIN_SCRIPT = os.environ.get("LAUNCHER_DEV_MAIN_SCRIPT", "main.py")
